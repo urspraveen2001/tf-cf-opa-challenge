@@ -17,19 +17,19 @@ The Repo proves the capability of Terraform and OPA where users are restricted t
     - git clone git@github.com:urspraveen2001/tf-cf-opa-challenge.git
 - Navigate to cloned repo directory
 - Create the new VPC, Subnet, Rds using below command.
-    - ./scripts/create-resources.sh *bucketName* *StateKeyfilename*
+    - ./scripts/create-resources.sh ***bucketName*** ***StateKeyfilename***
         - Creates 1 VPC, 2 Subnets and a RDS instance of mysql
 - Create the cloudformation stack.
-    - ./scripts/create-stack.sh *stack-name*
+    - ./scripts/create-stack.sh ***stack-name***
 - Wait for ~ 5 Mins for creation of all resources in the stack.
 - Modify the created subnet by running below script to check OPA rejects the change(Modifying the subnet avialabilty zone from ap-southeast-2a to ap-southeast-2c)
-    - ./scripts/update-resources.sh *bucketName* *StateKeyfilename* ap-southeast-2c
+    - ./scripts/update-resources.sh ***bucketName*** ***StateKeyfilename*** ap-southeast-2c
 - Verify the AWS Config and SSM Document behaviour(To verify the automatic updation of the instanceProtection flag) run the below script
-    - ./scripts/update-resources.sh *bucketName* *StateKeyfilename*
+    - ./scripts/update-resources.sh ***bucketName*** ***StateKeyfilename***
 
 ### Deletion of the entire environment.
 - Get the RDS DB Identifier which was created newly and run the below script.
-    - ./scripts/delete-infra-resources.sh *bucketName* *StateKeyfilename* *RDS_DB_Identifier* *stack-name*
+    - ./scripts/delete-infra-resources.sh ***bucketName*** ***StateKeyfilename*** ***RDS_DB_Identifier*** ***stack-name***
 
 ### CF Stack Design
 
