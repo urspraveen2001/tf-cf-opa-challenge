@@ -36,3 +36,8 @@ The Repo proves the capability of Terraform and OPA where users are restricted t
 ![Screenshot](cf-stack-design.JPG)
 
 ### Improvements
+- In cloudformation stack restrict the IAM role permission to specific actions and resources.
+- In Cloudformation stack create seperate IAM roles for different lambdas and SSM Document(Assume Role)
+- Rely on the terraform docker instead of software installed on the machine.
+- Create a docker image combining Terraform and OPA and change the scripts accordingly.
+- Enchance the AWS SSM Document to achieve the goal in multiple steps rather than calling a Lambda to update the RDS Instance.
