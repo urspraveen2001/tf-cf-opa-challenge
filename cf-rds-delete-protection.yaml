@@ -1,0 +1,227 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Template for Lambda Sample.
+Outputs:
+  LambdaRoleARN:
+    Description: Role for Lambda execution.
+    Value:
+      Fn::GetAtt:
+        - LambdaRole
+        - Arn
+    Export:
+      Name:
+        Fn::Sub: LambdaRole
+  LambdaFunctionName:
+    Value:
+      Ref: LambdaFunction
+  LambdaFunctionARN:
+    Description: Lambda function ARN.
+    Value:
+      Fn::GetAtt:
+        - LambdaFunction
+        - Arn
+    Export:
+      Name:
+        Fn::Sub: LambdaARN
+Resources:
+  ConfigPermissionToCallLambda: 
+    Type: AWS::Lambda::Permission
+    Properties: 
+      FunctionName: 
+        Fn::GetAtt: 
+          - LambdaFunction
+          - Arn
+      Action: "lambda:InvokeFunction"
+      Principal: "config.amazonaws.com"
+
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName:
+        Fn::Sub: lambda-role
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action:
+            - sts:AssumeRole
+            Effect: Allow
+            Principal:
+              Service:
+              - lambda.amazonaws.com
+              - ssm.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSLambdaFullAccess
+        - arn:aws:iam::aws:policy/service-role/AWS_ConfigRole
+        - arn:aws:iam::aws:policy/service-role/AmazonSSMAutomationRole
+        - arn:aws:iam::aws:policy/AmazonRDSFullAccess
+      Path: /
+  LambdaFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: rds-delete-protection-lambda
+      Description: Evaluate AWS Config RDS Delete protection rule
+      Runtime: python3.7
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          from datetime import datetime
+          def lambda_handler(event, context):
+                print(event)
+                invokingEvent=json.loads(event['invokingEvent'])
+                ruleParameters=json.loads(event['ruleParameters'])
+                compliance='NON_COMPLIANT'
+                print(ruleParameters['deletionProtection'])
+                print(invokingEvent['configurationItem']['configuration']['deletionProtection'])
+                if(json.loads(ruleParameters['deletionProtection'].lower())==invokingEvent['configurationItem']['configuration']['deletionProtection']):
+                    compliance='COMPLIANT'
+                print(compliance)
+                client = boto3.client('config')
+                response = client.put_evaluations(
+                    Evaluations=[
+                        {
+                            'ComplianceResourceType': invokingEvent['configurationItem']['resourceType'],
+                            'ComplianceResourceId': invokingEvent['configurationItem']['resourceId'],
+                            'ComplianceType': compliance,
+                            'OrderingTimestamp': datetime.strptime(invokingEvent['configurationItem']['configurationItemCaptureTime'],'%Y-%m-%dT%H:%M:%S.%fZ')
+                        },
+                    ],
+                    ResultToken=event['resultToken']
+                )
+                print(response)
+                return {
+                    'statusCode': 200,
+                    'body': json.dumps('Hello from Lambda!')
+                }
+
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Timeout: 10
+      Role:
+        Fn::GetAtt:
+          - LambdaRole
+          - Arn
+  LambdaDocumentFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName:
+        Fn::Sub: rds-update-delete-protection
+      Description: Update RDS Delete Protection flag to remideate
+      Runtime: python3.7
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          from datetime import datetime
+          def lambda_handler(event, context):
+                print(event)
+                resourceId=event['RDSInstanceId']
+                client=boto3.client('rds')
+                response = client.describe_db_instances(
+                    Filters=[
+                        {
+                            'Name': 'dbi-resource-id',
+                            'Values': [
+                                resourceId,
+                            ]
+                        },
+                    ]
+                )
+
+                instanceName=response['DBInstances'][0]['DBInstanceIdentifier']
+                print(instanceName)
+                client.modify_db_instance(
+                    DBInstanceIdentifier=instanceName,
+                    DeletionProtection=True
+                )
+                return {
+                    'statusCode': 200,
+                    'body': json.dumps('Hello from Lambda!')
+                }
+      Handler: index.lambda_handler
+      MemorySize: 128
+      Timeout: 10
+      Role:
+        Fn::GetAtt:
+          - LambdaRole
+          - Arn
+  ConfigRDSRule:
+    Type: AWS::Config::ConfigRule
+    Properties:
+      ConfigRuleName: RDSDeleteProtection
+      Description: Identifies the RDS resources which have delete protection as false
+      InputParameters:
+        deletionProtection: true
+      Scope: 
+        ComplianceResourceTypes: 
+          - "AWS::RDS::DBInstance"
+      Source: 
+        Owner: "CUSTOM_LAMBDA"
+        SourceDetails: 
+          - 
+            EventSource: "aws.config"
+            MessageType: "ConfigurationItemChangeNotification"
+        SourceIdentifier: 
+          Fn::GetAtt: 
+            - LambdaFunction
+            - Arn
+    DependsOn: ConfigPermissionToCallLambda
+  RDSSSMDocument:
+    Type: AWS::SSM::Document
+    Properties:
+      Name: RDS_DELETION
+      Content: 
+        schemaVersion: '0.3'
+        assumeRole: 
+          Fn::GetAtt:
+            - LambdaRole
+            - Arn
+        description: 'Run a script on Linux instances.'
+        parameters:
+          RDSResourceId:
+            type: String
+            description: "(Required) RDS Instance ID which is not complaint"
+          AutomationAssumeRole:
+            type: String
+            default: 
+              Fn::GetAtt:
+                - LambdaRole
+                - Arn
+        mainSteps:
+          - action: 'aws:invokeLambdaFunction'
+            name: RDSChangeDeleteProtection
+            maxAttempts: 3
+            timeoutSeconds: 120
+            onFailure: Abort
+            inputs:
+              FunctionName: 
+                Fn::GetAtt:
+                  - LambdaDocumentFunction
+                  - Arn
+              InputPayload:
+                RDSInstanceId: '{{RDSResourceId}}'
+      DocumentType: Automation
+
+  RDSInstanceProtectionRemediationConfiguration:
+    Type: "AWS::Config::RemediationConfiguration"
+    Properties:
+      Automatic: true
+      MaximumAutomaticAttempts: 1
+      RetryAttemptSeconds: 10
+      ConfigRuleName: RDSDeleteProtection
+      Parameters:
+        RDSResourceId:
+          ResourceValue:
+            Value: RESOURCE_ID
+        AutomationAssumeRole:
+          StaticValue:
+            Values: 
+              - Fn::GetAtt:
+                  - LambdaRole
+                  - Arn
+      TargetId: "RDS_DELETION"
+      TargetType: "SSM_DOCUMENT"
+      TargetVersion: "1"
+    DependsOn: 
+      - ConfigRDSRule
+      - RDSSSMDocument
